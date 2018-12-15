@@ -12,6 +12,7 @@ In this project, we use two physical fitness data sets to build models and predi
 Using the URLs provided by the prompt, we obtain the training and testing sets, and then store them in local variables. Of note, by peeking at the training data set in Excel, we see some errors of the form: "#DIV/O!". It is best to take care of these with the data load. The code is commented out where appropriate to avoid redownloading.
 
 ```{r download, eval = T, echo = T, message = F, warning = F, error = F}
+library(knitr)
 setwd("/Users/fred/Documents/CourseraCourses/dataScienceSpecialization/crs8_practicalMachineLearning/project/")
 #train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
 #download.file(url=train_url, destfile="training.csv")
