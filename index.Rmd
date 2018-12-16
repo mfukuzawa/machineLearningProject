@@ -1,0 +1,200 @@
+---
+title: "Machine Learning Course Project"
+date: 16-Dec-2018
+output: html_document
+---
+
+## Summary
+In this project, we use two physical fitness data sets to build models and predict the manner in which various exercises were performed. This response was coded in a variable called `classe`, and includes several categories such as, "Sitting", "Walking", "Standing", etc. [2]. Since `classe` is a factor, the models examined here are classification based--decision tree and random forest. We find that the random forest performs much better, with out-of-sample error **0.004**, compared to **0.2423** in the tree. Cross-validation was used to train prediction models on a testing data set before final application on a testing set. Specifically, both models were built off a random subset of the training set and then applied to the complementary subset in the training set. Only the random forest model was chosen for application to the true validation set (original test set).
+
+## Get the Data
+Using the URLs provided by the prompt, we obtain the training and testing sets, and then store them in local variables. Of note, by peeking at the training data set in Excel, we see some errors of the form: "#DIV/O!". It is best to take care of these with the data load. The code is commented out where appropriate to avoid redownloading.
+
+```{r download, eval = T, echo = T, message = F, warning = F, error = F}
+library(knitr)
+setwd("/Users/fred/Documents/CourseraCourses/dataScienceSpecialization/crs8_practicalMachineLearning/project/")
+#train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+#download.file(url=train_url, destfile="training.csv")
+
+#test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+#download.file(url=test_url, destfile="testing.csv")
+
+train <- read.csv("training.csv", na.strings=c("NA","#DIV/0!",""))
+test <- read.csv("testing.csv", na.strings=c("NA","#DIV/0!",""))
+
+#explore response variable -- classe
+str(train$classe)
+summary(train$classe)
+```
+
+## Model Approach
+Since the response variable `classe` is a factor, our model will be some type of classification function. In other words, a classification type model like a tree or random forest might be more appropriate than say a linear regression model, which is better suited for a continuous response. We'll use cross-validation to help with predictor variable selection as well as model selection. To do so, we'll subset the training data set into training and testing sets.
+
+```{r split, eval = T, echo = T, message = F, warning = F, error = F}
+library(caret)
+set.seed(7531)
+inTrain <- createDataPartition(y = train$classe, p = 0.6, list = F)
+sub_train <- train[inTrain,]
+sub_test <- train[-inTrain,]
+dim(sub_train)
+dim(sub_test)
+```
+
+## Variable Selection
+
+### Removing Zero Covariates
+We'll search through the training subset for the *near zero variables*, i.e. the ones with such little variability that they are not useful in prediction. Of course, we'll need to do the same in the testing subset.
+
+```{r nearzero, eval = T, echo = T, message = F, warning = F, error = F}
+#scan through training subset for nsv's; assign the column positions to a variable
+nsv <- nearZeroVar(sub_train)
+head(nsv,10)
+
+#do the same for the testing subset and original test
+nsv2 <- nearZeroVar(sub_test)
+nsv3 <- nearZeroVar(test)
+
+#remove near zero variables by excluding columns
+sub_train2 <- sub_train[, -nsv]
+sub_test2 <- sub_test[, -nsv2]
+
+#sanity check on data frame dimensions after processing
+dim(sub_train2)
+dim(sub_test2)
+```
+
+### Removing Blank Variables
+Now we'll search through the training subset for variables which contain majority blank (NA) values as these are not very helpful in prediction; let's use 60% as the threshhold. Again, we do the same to the testing subset. Full disclosure, this code was found from another Coursera user and modified to suit my needs [1].
+```{r rem, eval = T, echo = T, message = F, warning = F, error = F}
+sub_train3 <- sub_train2
+for (i in 1:length(sub_train2)) {
+  if (sum(is.na(sub_train2[ , i]))/nrow(sub_train2) >= .6) {
+    for (j in 1:length(sub_train3)) {
+      if (length(grep(names(sub_train2[i]), names(sub_train3)[j])) == 1) {
+        sub_train3 <- sub_train3[ , -j]
+      }
+    }
+  }
+}
+
+#check if removal changed columns
+dim(sub_train3)
+
+#changing all columns to numeric
+sub_train3[,c(1,3,4,6:58)] <- sapply(sub_train3[,c(1,3,4,6:58)], as.numeric)
+```
+
+```{r rem2, eval = T, echo = T, message = F, warning = F, error = F}
+#same NA removal operation on testing subset
+sub_test3 <- sub_test2
+for (i in 1:length(sub_test2)) {
+  if (sum(is.na(sub_test2[ , i]))/nrow(sub_test2) >= .6) {
+    for (j in 1:length(sub_test3)) {
+      if (length(grep(names(sub_test2[i]), names(sub_test3)[j])) == 1) {
+        sub_test3 <- sub_test3[ , -j]
+      }
+    }
+  }
+}
+
+dim(sub_test3)
+sub_test3[,c(1,3,4,6:58)] <- sapply(sub_test3[,c(1,3,4,6:58)], as.numeric)
+```
+
+As you can see, we've reduced the variable space down to 58 (59th is the response). Additionally, this next operation below is due to much trial-and-error. When predicting the random forest, there were issues in data compatibility between training and testing sets. Even with the change to all numeric columns, the factor columns still presented issues due to the different number of levels. I chose to remove the factor columns as they don't seem to be that important to prediction anyways, along with the other initial columns as they deal with user names and timestamps.
+```{r rem3, eval = T, echo = T, message = F, warning = F, error = F}
+#removing first 5 columns
+sub_train3 <- sub_train3[,-c(1:5)]
+sub_test3 <- sub_test3[,-c(1:5)]
+```
+
+## Decision Tree Model
+We train a tree model on our partitioned training set (noted as `sub_train3`). We then use it to predict on the other partition used for testing (noted as `sub_test`). The `rpart` function is used rather than `train` due to processing time.
+
+### Model Build
+```{r tree, eval = T, echo = T, message = F, warning = F, error = F}
+#build the model; rpart is used instead of train
+library(rpart)
+trainTree <- rpart(classe ~ ., data = sub_train3, method="class")
+
+#plotting tree with rpart.plot method
+library(rpart.plot)
+rpart.plot(trainTree, main="Classification Tree", extra=102, type = 5, under=T)
+
+#fancier tree plot
+library(rattle)
+fancyRpartPlot(trainTree)
+```
+
+### Model Prediction
+Now we predict new values using the tree on the partitioned testing set.
+```{r predicttree, eval = T, echo = T, message = F, warning = F, error = F}
+#predict on testing subset
+pred1 <- predict(trainTree, sub_test3, type = "class")
+```
+
+### Evaluate Performance
+Now we'll compare the tree model's performance to the subset used for testing.
+```{r modelcompare, eval = T, echo = T, message = F, warning = F, error = F}
+confusionMatrix(pred1, sub_test3$classe)
+```
+
+Examining the output from above, we see that the tree accuracy is **0.7577**, which means its estimated out-of-sample error is **0.2423**. Thus, we'll explore another model--random forest--which should improve on accuracy.
+
+## Random Forest Model
+The same data sets are used, but this time we'll use the random forest model, usually a top performing model in many prediction circumstances.
+
+### Model Build
+```{r forest, eval = T, echo = T, message = F, warning = F, error = F}
+#build the model
+library(randomForest)
+set.seed(7531)
+trainForest <- randomForest(classe ~., data = sub_train3)
+```
+
+### Model Prediction
+Now we predict new values using the forest on the partitioned testing set.
+```{r predictforest, eval = T, echo = T, message = F, warning = F, error = F}
+#predict
+pred2 <- predict(trainForest, newdata = sub_test3, type = "class")
+```
+
+### Evaluate Performance
+Now we'll compare the forest model's performance to the subset used for testing.
+```{r modelcompare2, eval = T, echo = T, message = F, warning = F, error = F}
+confusionMatrix(pred2, sub_test3$classe)
+```
+
+As to be expected, the forest performs better than the tree as evidenced by its accuracy of **0.996**, which means its estimated out-of-sample error is **0.004**. Based off this accuracy measure, we'll choose the random forest to proceed with evaluation on the original test set provided by the course.
+
+## Final Model Application
+Below we'll apply the random forest model to the original test set and attempt to predict on the 20 test cases.
+```{r finalmodel, eval = T, echo = T, message = F, warning = F, error = F}
+#remove near zero variates in test set
+new_test <- test[,-nsv3]
+
+#remove majority NA columns
+new_test2 <- new_test
+for (i in 1:length(new_test)) {
+  if (sum(is.na(new_test[ , i]))/nrow(new_test) >= .6) {
+    for (j in 1:length(new_test2)) {
+      if (length(grep(names(new_test[i]), names(new_test2)[j])) == 1) {
+        new_test2 <- new_test2[ , -j]
+      }
+    }
+  }
+}
+
+#same pre-processing steps as before
+new_test2[,c(1,3,4,6:58)] <- sapply(new_test2[,c(1,3,4,6:58)], as.numeric)
+new_test2 <- new_test2[,-c(1:5)]
+
+#predict on the test set
+finalModel <- predict(trainForest, new_test2)
+finalModel
+```
+
+## References
+[1] Anonymous. https://rstudio-pubs-static.s3.amazonaws.com/120618_b9d85bae44c245a38dca5444e4831727.html
+
+[2] Ugolino, W. et al. http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har 
