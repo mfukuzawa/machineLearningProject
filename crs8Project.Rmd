@@ -1,6 +1,5 @@
 ---
 title: "Machine Learning Course Project"
-author: Mat Fukuzawa
 date: 16-Dec-2018
 output: html_document
 ---
